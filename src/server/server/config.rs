@@ -54,10 +54,10 @@ impl Config {
     }
 
     pub fn parse_env_var(&mut self) {
-        if let Ok(host) = std::env::var("AMQ_HOST") {
+        if let Ok(host) = std::env::var("AKV_HOST") {
             self.host = host;
         }
-        if let Ok(port) = std::env::var("AMQ_PORT") {
+        if let Ok(port) = std::env::var("AKV_PORT") {
             self.port = port.parse().unwrap();
         }
     }

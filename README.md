@@ -1,59 +1,48 @@
-# AhriMQ (AMQ)
+# Ahrikv (Akv)
 
-[![Build Status](https://github.com/ahriroot/ahrimq/actions/workflows/release.yml/badge.svg)](https://github.com/ahriroot/ahrimq/actions)
-[![GitHub Release](https://img.shields.io/github/v/release/ahriroot/ahrimq?style=flat-square)](https://github.com/ahriroot/ahrimq/releases)
-[![License](https://img.shields.io/github/license/ahriroot/ahrimq?style=flat-square)](https://github.com/ahriroot/ahrimq)
+[![Build Status](https://github.com/ahriroot/ahrikv/actions/workflows/release.yml/badge.svg)](https://github.com/ahriroot/ahrikv/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/ahriroot/ahrikv?style=flat-square)](https://github.com/ahriroot/ahrikv/releases)
+[![License](https://img.shields.io/github/license/ahriroot/ahrikv?style=flat-square)](https://github.com/ahriroot/ahrikv)
 
-> A high-performance message queue service supporting pub/sub, normal messages, ordered messages, delayed messages and dead letter queues.
+> A high-performance in-memory key-value store.
 
 ## Usage
 
-### Run AhriMQ Server
+### Run Ahrikv Server
 
 ```bash
 # run with default config
-amqs
+akvs
 
 # run with config file
-amqs config.toml
+akvs config.toml
 ```
 
 #### Default configuration
 
 ```toml
 host = "127.0.0.1"
-port = 60001
-access_key = "your_access_key"
-access_secret = "your_access_secret"
-retry_times = 3
-retry_interval = 60
+port = 60002
+secret = "your_secret"
 ```
 
 ### Install by downloading binary
 
-Download the latest binary from the [releases page](https://github.com/ahriroot/ahrimq/releases) and copy it to the desired location.
+Download the latest binary from the [releases page](https://github.com/ahriroot/ahrikv/releases) and copy it to the desired location.
 
 ### Install from Crates.io
 
 ```bash
-cargo install ahrimq
+cargo install ahrikv
 ```
 
 ### Install from Source
 
 ```bash
-git clone https://github.com/ahriroot/ahrimq.git
-cd ahrimq
+git clone https://github.com/ahriroot/ahrikv.git
+cd ahrikv
 cargo build --release
 ```
-
-## Features
-
-- Sub and Pub: Support for publishing and subscribing to messages.
-- Normal Messages: Support for normal messages.
-- Ordered Messages: Support for ordered messages.
-- Delay Messages: Support for delayed messages.
-- Dead Letter Queues: Support for dead letter queues.
 
 ## License
 
