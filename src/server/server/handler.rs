@@ -1,5 +1,5 @@
 use akv::{
-    command::{CmdType, Pong},
+    command::{Authenticate, CmdType, Pong, ResultAuthenticate},
     MAGIC_NUMBER,
 };
 use tokio::{
@@ -15,7 +15,6 @@ pub async fn handler(socket: TcpStream, mut state: State) {
 
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            let _ = writer.write_u32(message.len() as u32).await;
             let _ = writer.write_all(&message).await;
         }
     });
@@ -35,11 +34,12 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                 let req_type = match head[3] {
                     0x01 => CmdType::Ping,
                     0x02 => CmdType::Authenticate,
+                    0x03 => CmdType::Keys,
+                    0x04 => CmdType::Exists,
+                    0x05 => CmdType::Expire,
                     0x11 => CmdType::GetString,
                     0x12 => CmdType::SetString,
                     0x13 => CmdType::DelString,
-                    0x14 => CmdType::ExistsString,
-                    0x15 => CmdType::ExpireString,
                     _ => {
                         return;
                     }
@@ -54,14 +54,22 @@ pub async fn handler(socket: TcpStream, mut state: State) {
             }
         };
         if header.1 != CmdType::Authenticate {
+            let auth_result = ResultAuthenticate::new(false, "unauthorized".to_string());
+            let _ = tx.send(auth_result.to_result().unwrap()).await;
             continue;
         }
         let mut body = vec![0u8; header.2];
         reader.read_exact(&mut body).await.unwrap();
 
-        let secret = String::from_utf8(body).unwrap();
-        if secret == state.config.secret {
+        let auth: Authenticate = serde_json::from_slice(&body).unwrap();
+        if auth.secret == state.config.secret {
+            let auth_result = ResultAuthenticate::new(true, "ok".to_string());
+            let _ = tx.send(auth_result.to_result().unwrap()).await;
             break;
+        } else {
+            let auth_result = ResultAuthenticate::new(false, "secret error".to_string());
+            let _ = tx.send(auth_result.to_result().unwrap()).await;
+            continue;
         }
     }
 
@@ -80,11 +88,12 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                 let req_type = match head[3] {
                     0x01 => CmdType::Ping,
                     0x02 => CmdType::Authenticate,
-                    0x11 => CmdType::GetString,
-                    0x12 => CmdType::SetString,
+                    0x03 => CmdType::Keys,
+                    0x04 => CmdType::Exists,
+                    0x05 => CmdType::Expire,
+                    0x11 => CmdType::SetString,
+                    0x12 => CmdType::GetString,
                     0x13 => CmdType::DelString,
-                    0x14 => CmdType::ExistsString,
-                    0x15 => CmdType::ExpireString,
                     _ => {
                         continue;
                     }
@@ -115,8 +124,17 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                     let keys = state.keys(body).await.unwrap();
                     let _ = tx.send(keys.to_result().unwrap()).await;
                 }
+                CmdType::Exists => {
+                    let exists = state.exists(body).await.unwrap();
+                    let _ = tx.send(exists.to_result().unwrap()).await;
+                }
+                CmdType::Expire => {
+                    let expire = state.expire(body).await.unwrap();
+                    let _ = tx.send(expire.to_result().unwrap()).await;
+                }
                 CmdType::SetString => {
-                    let _ = state.set_string(body).await;
+                    let string = state.set_string(body).await.unwrap();
+                    let _ = tx.send(string.to_result().unwrap()).await;
                 }
                 CmdType::GetString => {
                     let string = state.get_string(body).await.unwrap();
@@ -125,14 +143,6 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                 CmdType::DelString => {
                     let string = state.del_string(body).await.unwrap();
                     let _ = tx.send(string.to_result().unwrap()).await;
-                }
-                CmdType::ExistsString => {
-                    let exists = state.exists_string(body).await.unwrap();
-                    let _ = tx.send(exists.to_result().unwrap()).await;
-                }
-                CmdType::ExpireString => {
-                    let expire = state.expire_string(body).await.unwrap();
-                    let _ = tx.send(expire.to_result().unwrap()).await;
                 }
             },
             Err(_) => {

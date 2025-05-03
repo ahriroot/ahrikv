@@ -1,9 +1,10 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    time::Instant,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-#[derive(Debug)]
+use bincode::{Decode, Encode};
+
+use crate::utils;
+
+#[derive(Debug, Clone, Encode, Decode)]
 pub enum Value {
     String(String),
     List(VecDeque<String>),           // 使用 VecDeque 实现双向链表
@@ -12,16 +13,15 @@ pub enum Value {
     SortedSet(BTreeMap<String, f64>), // 使用 BTreeMap 实现有序集合(分数作为值)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Entry {
     pub value: Value,
-    pub expires_at: Option<Instant>,
+    pub expires_at: Option<u64>,
 }
 
 impl Entry {
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|t| t <= Instant::now())
-            .unwrap_or(false)
+        let now = utils::get_unix_timestamp();
+        self.expires_at.map(|t| t <= now).unwrap_or(false)
     }
 }
