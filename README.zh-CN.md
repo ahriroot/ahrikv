@@ -1,4 +1,4 @@
-# Ahrikv (Akv) 消息队列
+# Ahrikv (Akv) kv数据库
 
 [![Build Status](https://github.com/ahriroot/ahrikv/actions/workflows/release.yml/badge.svg)](https://github.com/ahriroot/ahrikv/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/ahriroot/ahrikv?style=flat-square)](https://github.com/ahriroot/ahrikv/releases)
