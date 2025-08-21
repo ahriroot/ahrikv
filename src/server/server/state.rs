@@ -2,6 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use akv::{
     command::{
+        hash::{
+            HashDel, HashExists, HashFields, HashGet, HashLen, HashSet, ResultHashDel,
+            ResultHashExists, ResultHashFields, ResultHashGet, ResultHashLen, ResultHashSet,
+        },
         string::{
             DelString, GetString, ResultDelString, ResultGetString, ResultSetString, SetString,
         },
@@ -230,6 +234,231 @@ impl State {
             }
             None => return Ok(ResultDelString::new(None, None)),
         }
+    }
+
+    pub async fn hash_set(&mut self, data: Vec<u8>) -> Result<ResultHashSet, Error> {
+        let hash: HashSet =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+        let mut db = db.write().await;
+
+        if let Some(entry) = db.get_mut(&hash.key) {
+            match entry.value {
+                Value::Hash(ref mut map) => {
+                    map.insert(hash.field, hash.value);
+                }
+                _ => return Err(Error::BadCommand("not a hash".to_string())),
+            }
+            if let Some(t) = hash.expire {
+                entry.expires_at = Some(utils::get_unix_timestamp() + t);
+            }
+        } else {
+            let mut map = HashMap::new();
+            map.insert(hash.field, hash.value);
+            db.insert(
+                hash.key.clone(),
+                Entry {
+                    value: Value::Hash(map),
+                    expires_at: hash.expire.map(|t| utils::get_unix_timestamp() + t),
+                },
+            );
+        };
+
+        return Ok(ResultHashSet::new(true, "ok".to_string()));
+    }
+
+    pub async fn hash_get(&mut self, data: Vec<u8>) -> Result<ResultHashGet, Error> {
+        let hash: HashGet =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+
+        let (value, expire) = {
+            let db = db.read().await;
+            let entry = db.get(&hash.key);
+
+            match entry {
+                Some(e) => match e.value {
+                    Value::Hash(ref map) => (
+                        map.get(&hash.field).cloned(),
+                        e.expires_at.map(|t| {
+                            let now = utils::get_unix_timestamp();
+                            if t > now {
+                                t - now
+                            } else {
+                                0
+                            }
+                        }),
+                    ),
+                    _ => return Err(Error::BadCommand("not a hash".to_string())),
+                },
+                _ => return Ok(ResultHashGet::new(None, None)),
+            }
+        };
+
+        if let Some(t) = expire {
+            if t == 0 {
+                let mut db = db.write().await;
+                db.remove(&hash.key);
+                return Ok(ResultHashGet::new(None, None));
+            }
+        }
+
+        Ok(ResultHashGet::new(value, expire))
+    }
+
+    pub async fn hash_del(&mut self, data: Vec<u8>) -> Result<ResultHashDel, Error> {
+        let hash: HashDel =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+        let mut db = db.write().await;
+
+        let (value, expire) = {
+            let entry = db
+                .get_mut(&hash.key)
+                .ok_or(Error::BadCommand("key not found".to_string()))?;
+
+            match entry.value {
+                Value::Hash(ref mut map) => {
+                    let value = map.remove(&hash.field);
+                    if let Some(t) = entry.expires_at {
+                        if t == 0 {
+                            return Ok(ResultHashDel::new(None, None));
+                        } else {
+                            (value, Some(t))
+                        }
+                    } else {
+                        (value, None)
+                    }
+                }
+                _ => return Err(Error::BadCommand("not a hash".to_string())),
+            }
+        };
+
+        Ok(ResultHashDel::new(value, expire))
+    }
+
+    pub async fn hash_exists(&mut self, data: Vec<u8>) -> Result<ResultHashExists, Error> {
+        let hash: HashExists =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+
+        let (exists, expire) = {
+            let db = db.read().await;
+            let entry = db.get(&hash.key);
+
+            match entry {
+                Some(e) => match e.value {
+                    Value::Hash(ref map) => (
+                        map.contains_key(&hash.field),
+                        e.expires_at.map(|t| {
+                            let now = utils::get_unix_timestamp();
+                            if t > now {
+                                t - now
+                            } else {
+                                0
+                            }
+                        }),
+                    ),
+                    _ => return Err(Error::BadCommand("not a hash".to_string())),
+                },
+                _ => return Ok(ResultHashExists::new(false)),
+            }
+        };
+        if let Some(t) = expire {
+            if t == 0 {
+                let mut db = db.write().await;
+                db.remove(&hash.key);
+                return Ok(ResultHashExists::new(false));
+            }
+        }
+
+        Ok(ResultHashExists::new(exists))
+    }
+
+    pub async fn hash_len(&mut self, data: Vec<u8>) -> Result<ResultHashLen, Error> {
+        let hash: HashLen =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+
+        let (len, expire) = {
+            let db = db.read().await;
+            let entry = db.get(&hash.key);
+
+            match entry {
+                Some(e) => match e.value {
+                    Value::Hash(ref map) => (
+                        map.len() as u32,
+                        e.expires_at.map(|t| {
+                            let now = utils::get_unix_timestamp();
+                            if t > now {
+                                t - now
+                            } else {
+                                0
+                            }
+                        }),
+                    ),
+                    _ => return Err(Error::BadCommand("not a hash".to_string())),
+                },
+                _ => return Ok(ResultHashLen::new(0)),
+            }
+        };
+
+        if let Some(t) = expire {
+            if t == 0 {
+                let mut db = db.write().await;
+                db.remove(&hash.key);
+                return Ok(ResultHashLen::new(0));
+            }
+        }
+
+        Ok(ResultHashLen::new(len))
+    }
+
+    pub async fn hash_fields(&mut self, data: Vec<u8>) -> Result<ResultHashFields, Error> {
+        let hash: HashFields =
+            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+
+        let db = self.get_db(hash.db).await;
+
+        let (keys, expire) = {
+            let db = db.read().await;
+            let entry = db.get(&hash.key);
+
+            match entry {
+                Some(e) => match e.value {
+                    Value::Hash(ref map) => (
+                        map.keys().cloned().collect::<Vec<String>>(),
+                        e.expires_at.map(|t| {
+                            let now = utils::get_unix_timestamp();
+                            if t > now {
+                                t - now
+                            } else {
+                                0
+                            }
+                        }),
+                    ),
+                    _ => return Err(Error::BadCommand("not a hash".to_string())),
+                },
+                _ => return Ok(ResultHashFields::new(Vec::new(), 0)),
+            }
+        };
+
+        if let Some(t) = expire {
+            if t == 0 {
+                let mut db = db.write().await;
+                db.remove(&hash.key);
+                return Ok(ResultHashFields::new(Vec::new(), 0));
+            }
+        }
+
+        let len = keys.len() as u32;
+
+        Ok(ResultHashFields::new(keys, len))
     }
 }
 

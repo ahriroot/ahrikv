@@ -1,3 +1,4 @@
+pub mod hash;
 pub mod string;
 
 use bincode::{Decode, Encode};
@@ -15,6 +16,12 @@ pub enum CmdType {
     SetString = 0x11,
     GetString = 0x12,
     DelString = 0x13,
+    HashSet = 0x21,
+    HashGet = 0x22,
+    HashDel = 0x23,
+    HashExists = 0x24,
+    HashLen = 0x25,
+    HashFields = 0x26,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]

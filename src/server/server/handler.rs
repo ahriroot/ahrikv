@@ -94,6 +94,12 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                     0x11 => CmdType::SetString,
                     0x12 => CmdType::GetString,
                     0x13 => CmdType::DelString,
+                    0x21 => CmdType::HashSet,
+                    0x22 => CmdType::HashGet,
+                    0x23 => CmdType::HashDel,
+                    0x24 => CmdType::HashExists,
+                    0x25 => CmdType::HashLen,
+                    0x26 => CmdType::HashFields,
                     _ => {
                         continue;
                     }
@@ -143,6 +149,30 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                 CmdType::DelString => {
                     let string = state.del_string(body).await.unwrap();
                     let _ = tx.send(string.to_result().unwrap()).await;
+                }
+                CmdType::HashSet => {
+                    let hash = state.hash_set(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
+                }
+                CmdType::HashGet => {
+                    let hash = state.hash_get(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
+                }
+                CmdType::HashDel => {
+                    let hash = state.hash_del(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
+                }
+                CmdType::HashExists => {
+                    let hash = state.hash_exists(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
+                }
+                CmdType::HashLen => {
+                    let hash = state.hash_len(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
+                }
+                CmdType::HashFields => {
+                    let hash = state.hash_fields(body).await.unwrap();
+                    let _ = tx.send(hash.to_result().unwrap()).await;
                 }
             },
             Err(_) => {
