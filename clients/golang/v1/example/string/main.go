@@ -64,7 +64,7 @@ func main() {
 
 	fmt.Println("Keys:", keys)
 
-	// sleep for 3 seconds
+	// sleep for 6 seconds
 	time.Sleep(time.Second * 6)
 
 	rs, err := akv.Get("key")

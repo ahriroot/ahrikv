@@ -25,7 +25,7 @@ impl ResultHashSet {
         Self { ok, msg }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -33,6 +33,7 @@ impl ResultHashSet {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashSet as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -58,7 +59,7 @@ impl ResultHashGet {
         Self { value, expire }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -66,6 +67,7 @@ impl ResultHashGet {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashGet as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -91,7 +93,7 @@ impl ResultHashDel {
         Self { value, expire }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -99,6 +101,7 @@ impl ResultHashDel {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashDel as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -123,7 +126,7 @@ impl ResultHashExists {
         Self { exists }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -131,6 +134,7 @@ impl ResultHashExists {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashExists as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -154,7 +158,7 @@ impl ResultHashLen {
         Self { len }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -162,6 +166,7 @@ impl ResultHashLen {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashLen as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -186,7 +191,7 @@ impl ResultHashFields {
         Self { fields, total }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -194,6 +199,7 @@ impl ResultHashFields {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::HashFields as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 

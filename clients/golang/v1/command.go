@@ -15,4 +15,5 @@ const (
 	CmdHashExists   = 0x24
 	CmdHashLen      = 0x25
 	CmdHashFields   = 0x26
+	Error           = 0xff
 )

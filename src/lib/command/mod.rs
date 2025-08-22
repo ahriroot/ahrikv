@@ -22,6 +22,7 @@ pub enum CmdType {
     HashExists = 0x24,
     HashLen = 0x25,
     HashFields = 0x26,
+    Error = 0xff,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
@@ -43,7 +44,7 @@ impl Pong {
         Self { timestamp: 0 }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -51,8 +52,35 @@ impl Pong {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.push(VERSION); // 版本
         result.push(CmdType::Ping as u8); // Ping 命令结果
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 长度
         result.extend(data); // Pong 数据
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+pub struct ResultError {
+    pub cmd: u8,
+    pub msg: String,
+}
+
+impl ResultError {
+    pub fn new(cmd: u8, msg: String) -> Self {
+        Self { cmd, msg }
+    }
+
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = serde_json::to_vec(self)?;
+        let data_length = data.len() as u32;
+
+        let mut result = vec![];
+        result.extend(&MAGIC_NUMBER); // 魔数
+        result.extend(&VERSION.to_be_bytes()); // 版本
+        result.push(CmdType::Error as u8); // 错误
+        result.extend(&seq.to_be_bytes()); // 序列号
+        result.extend(&data_length.to_be_bytes()); // 长度
+        result.extend(data); // 错误数据
         Ok(result)
     }
 }
@@ -73,7 +101,7 @@ impl ResultAuthenticate {
         Self { ok, msg }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -81,6 +109,7 @@ impl ResultAuthenticate {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.push(VERSION); // 版本
         result.push(CmdType::Authenticate as u8); // Authenticate 命令结果
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 长度
         result.extend(data); // Authenticate 数据
         Ok(result)
@@ -105,7 +134,7 @@ impl ResultKeys {
         Self { keys, total }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -113,6 +142,7 @@ impl ResultKeys {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.push(VERSION); // 版本
         result.push(CmdType::Keys as u8); // Keys 命令结果
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 长度
         result.extend(data); // Keys 数据
         Ok(result)
@@ -135,7 +165,7 @@ impl ResultExists {
         Self { exists }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -143,6 +173,7 @@ impl ResultExists {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::Exists as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
@@ -167,7 +198,7 @@ impl ResultExpire {
         Self { ok }
     }
 
-    pub fn to_result(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = serde_json::to_vec(self)?;
         let data_length = data.len() as u32;
 
@@ -175,6 +206,7 @@ impl ResultExpire {
         result.extend(&MAGIC_NUMBER); // 魔数
         result.extend(&VERSION.to_be_bytes()); // 版本
         result.push(CmdType::Expire as u8);
+        result.extend(&seq.to_be_bytes()); // 序列号
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 

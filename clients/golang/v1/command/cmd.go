@@ -6,6 +6,42 @@ type Command interface {
 	Serialize() ([]byte, error)
 }
 
+// ========== Ping ==========
+type Ping struct {
+}
+
+func (s Ping) Serialize() ([]byte, error) {
+	return json.Marshal(s)
+}
+
+type ResultPing struct {
+}
+
+func DeserializeResultPing(data []byte) (*ResultPing, error) {
+	var result ResultPing
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ========== Error ==========
+
+type ResultError struct {
+	Cmd uint8  `json:"cmd"`
+	Msg string `json:"msg"`
+}
+
+func DeserializeResultError(data []byte) (*ResultError, error) {
+	var result ResultError
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ========== Authenticate ==========
 type Authenticate struct {
 	Secret string `json:"secret"`

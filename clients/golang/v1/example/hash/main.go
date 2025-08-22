@@ -9,7 +9,7 @@ import (
 func main() {
 	akv, err := v1.NewAhrikv(v1.Config{
 		Host:   "127.0.0.1",
-		Port:   60003,
+		Port:   60002,
 		Secret: "your_secret",
 	}, "dbname")
 	if err != nil {
@@ -17,7 +17,7 @@ func main() {
 		panic(err)
 	}
 
-	err = akv.HashSet("key", "field", "value", 5)
+	_, err = akv.HashSet("key", "field", "value", 5)
 	if err != nil {
 		panic(err)
 	}

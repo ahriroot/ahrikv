@@ -64,6 +64,7 @@ async fn read_cache_file(state: &mut State) {
             let jh = interval(map.clone());
             databases.insert(db.clone(), (map, jh));
         }
+        println!("Cache loaded from {:?}", databases);
     }
 }
 
