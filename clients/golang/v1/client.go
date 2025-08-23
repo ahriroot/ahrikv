@@ -67,13 +67,13 @@ func (c *Ahrikv) reconnect() error {
 
 	c.conn = conn
 
-	go c.recv()
-
 	// 重新认证
 	if err := c.authenticate(conn); err != nil {
 		conn.Close()
 		return fmt.Errorf("re-authenticate failed: %v", err)
 	}
+
+	go c.recv()
 
 	go func() {
 		for {
@@ -217,8 +217,14 @@ func (a *Ahrikv) send(cmdType uint8, cmd command.Command) (chan ChanMessage, err
 	binary.BigEndian.PutUint32(header[8:12], bodyLen)
 
 	// 发送头部 + 请求体
-	a.conn.Write(header)
-	a.conn.Write(body)
+	_, err = a.conn.Write(header)
+	if err != nil {
+		return nil, err
+	}
+	_, err = a.conn.Write(body)
+	if err != nil {
+		return nil, err
+	}
 	return ch, nil
 }
 
