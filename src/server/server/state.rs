@@ -12,6 +12,7 @@ use akv::{
         Exists, Expire, Keys, ResultExists, ResultExpire, ResultKeys,
     },
     error::Error,
+    persistence::PersistenceEngine,
     utils,
     value::{Entry, Value},
 };
@@ -26,6 +27,7 @@ type Databases = Arc<RwLock<HashMap<String, (Database, Taskhandle)>>>;
 pub struct State {
     pub config: Config,
     pub databases: Databases,
+    pub persistence_engine: Option<PersistenceEngine>,
 }
 
 impl State {
@@ -33,6 +35,7 @@ impl State {
         Self {
             config: self.config.clone(),
             databases: self.databases.clone(),
+            persistence_engine: self.persistence_engine.clone(),
         }
     }
 
@@ -116,6 +119,9 @@ impl State {
         let string: Expire =
             serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
+        let db_name = string.db.clone();
+        let key = string.key.clone();
+
         let db = self.get_db(string.db).await;
 
         let mut db = db.write().await;
@@ -132,10 +138,18 @@ impl State {
             }
         }
 
-        if string.expire == 0 {
-            entry.expires_at = None;
+        let expires_at = if string.expire == 0 {
+            None
         } else {
-            entry.expires_at = Some(utils::get_unix_timestamp() + string.expire);
+            Some(utils::get_unix_timestamp() + string.expire)
+        };
+
+        entry.expires_at = expires_at;
+
+        if let Some(ref engine) = self.persistence_engine {
+            if let Some(t) = expires_at {
+                let _ = engine.expire(db_name, key, t).await;
+            }
         }
 
         Ok(ResultExpire { ok: true })
@@ -145,16 +159,22 @@ impl State {
         let string: SetString =
             serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
+        let db_name = string.db.clone();
+        let key = string.key.clone();
+
         let db = self.get_db(string.db).await;
         let mut db = db.write().await;
 
-        db.insert(
-            string.key.clone(),
-            Entry {
-                value: Value::String(string.value.clone()),
-                expires_at: string.expire.map(|t| utils::get_unix_timestamp() + t),
-            },
-        );
+        let entry = Entry {
+            value: Value::String(string.value.clone()),
+            expires_at: string.expire.map(|t| utils::get_unix_timestamp() + t),
+        };
+
+        db.insert(key.clone(), entry.clone());
+
+        if let Some(ref engine) = self.persistence_engine {
+            let _ = engine.set(db_name, key, entry).await;
+        }
 
         Ok(ResultSetString::new(true, "ok".to_string()))
     }
@@ -203,10 +223,17 @@ impl State {
         let string: DelString =
             serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
+        let db_name = string.db.clone();
+        let key = string.key.clone();
+
         let db = self.get_db(string.db).await;
         let mut db = db.write().await;
 
         let value = db.remove(&string.key);
+
+        if let Some(ref engine) = self.persistence_engine {
+            let _ = engine.delete(db_name, key).await;
+        }
 
         match value {
             Some(entry) => {
@@ -240,6 +267,9 @@ impl State {
         let hash: HashSet =
             serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
+        let db_name = hash.db.clone();
+        let key = hash.key.clone();
+
         let db = self.get_db(hash.db).await;
         let mut db = db.write().await;
 
@@ -253,16 +283,22 @@ impl State {
             if let Some(t) = hash.expire {
                 entry.expires_at = Some(utils::get_unix_timestamp() + t);
             }
+
+            if let Some(ref engine) = self.persistence_engine {
+                let _ = engine.set(db_name, key, entry.clone()).await;
+            }
         } else {
             let mut map = HashMap::new();
             map.insert(hash.field, hash.value);
-            db.insert(
-                hash.key.clone(),
-                Entry {
-                    value: Value::Hash(map),
-                    expires_at: hash.expire.map(|t| utils::get_unix_timestamp() + t),
-                },
-            );
+            let entry = Entry {
+                value: Value::Hash(map),
+                expires_at: hash.expire.map(|t| utils::get_unix_timestamp() + t),
+            };
+            db.insert(key.clone(), entry.clone());
+
+            if let Some(ref engine) = self.persistence_engine {
+                let _ = engine.set(db_name, key, entry).await;
+            }
         };
 
         return Ok(ResultHashSet::new(true, "ok".to_string()));

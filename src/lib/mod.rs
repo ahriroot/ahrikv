@@ -1,5 +1,6 @@
 pub mod command;
 pub mod error;
+pub mod persistence;
 pub mod utils;
 pub mod value;
 

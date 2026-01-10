@@ -1,9 +1,10 @@
-use std::{collections::HashMap, env, ffi::OsString, path::Path, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use akv::value::Entry;
-use bincode::{config::standard, Decode, Encode};
+use akv::{
+    persistence::{config::PersistenceConfig, PersistenceEngine},
+};
 use tokio::{
-    fs,
     net::TcpListener,
     sync::{oneshot, RwLock},
 };
@@ -17,12 +18,16 @@ pub async fn start(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::new().unwrap();
 
+    let persistence_config = PersistenceConfig::default();
+    let persistence_engine = PersistenceEngine::new(persistence_config).await?;
+
     let mut state = State {
         config: config.clone(),
         databases: Arc::new(RwLock::new(HashMap::new())),
+        persistence_engine: Some(persistence_engine.clone()),
     };
 
-    read_cache_file(&mut state).await;
+    recover_data(&mut state).await;
 
     let sstop = state.clone();
     tokio::spawn(async move {
@@ -42,56 +47,34 @@ pub async fn start(
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
-struct Cache {
-    cache: HashMap<String, HashMap<String, Entry>>,
-}
-
-async fn read_cache_file(state: &mut State) {
-    let config = standard().with_variable_int_encoding().with_little_endian();
-
-    let home_dir = env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE")) // Windows 兼容
-        .unwrap_or(OsString::from("./"));
-    let cache_dir = Path::new(&home_dir).join(".ahriknow/ahrikv");
-    let cache_file = cache_dir.join("cache.akv");
-    if cache_file.exists() {
-        let encoded = fs::read(cache_file).await.unwrap();
-        let msgs: Cache = bincode::decode_from_slice(&encoded, config).unwrap().0;
-        let mut databases = state.databases.write().await;
-        for (db, entries) in msgs.cache.iter() {
-            let map = Arc::new(RwLock::new(entries.clone()));
-            let jh = interval(map.clone());
-            databases.insert(db.clone(), (map, jh));
+async fn recover_data(state: &mut State) {
+    if let Some(ref engine) = state.persistence_engine {
+        if let Ok(databases) = engine.recover().await {
+            let mut state_dbs = state.databases.write().await;
+            for (db, entries) in databases.iter() {
+                let map = Arc::new(RwLock::new(entries.clone()));
+                let jh = interval(map.clone());
+                state_dbs.insert(db.clone(), (map, jh));
+            }
+            println!("Data recovered from WAL and snapshot");
         }
-        println!("Cache loaded from {:?}", databases);
     }
 }
 
 async fn stop(state: State, shutdown_receiver: oneshot::Receiver<()>) {
     let _ = shutdown_receiver.await;
 
-    let home_dir = env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE")) // Windows 兼容
-        .unwrap_or(OsString::from("./"));
-    let cache_dir = Path::new(&home_dir).join(".ahriknow/ahrikv");
-    fs::create_dir_all(&cache_dir)
-        .await
-        .expect("Failed to create cache directory");
+    if let Some(ref engine) = state.persistence_engine {
+        let mut cache = HashMap::new();
+        let databases = state.databases.read().await;
+        for (db, (map, jh)) in databases.iter() {
+            jh.abort();
+            cache.insert(db.clone(), map.read().await.clone());
+        }
 
-    let mut cache = HashMap::new();
-    let databases = state.databases.read().await;
-    for (db, (map, jh)) in databases.iter() {
-        jh.abort();
-        cache.insert(db.clone(), map.read().await.clone());
+        let _ = engine.create_snapshot(&cache).await;
+        println!("Snapshot created");
     }
-
-    let cache_file = cache_dir.join("cache.akv");
-    let config = standard().with_variable_int_encoding().with_little_endian();
-    let encoded = bincode::encode_to_vec(&Cache { cache }, config).unwrap();
-    fs::write(cache_file, encoded)
-        .await
-        .expect("Failed to write cache file");
 
     println!("Shutting down...");
     std::process::exit(0);
