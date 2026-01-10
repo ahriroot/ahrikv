@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"sync"
@@ -28,74 +29,66 @@ func NewAhrikvClient(config Config) (*Ahrikv, error) {
 }
 
 func NewAhrikv(config Config, database string) (*Ahrikv, error) {
+	if config.Mode != Active && config.Mode != Passive {
+		config.Mode = Active
+	}
+	if config.PingInterval == 0 {
+		config.PingInterval = 60 * time.Second
+	}
+	if config.ReconnectInterval == 0 {
+		config.ReconnectInterval = 5 * time.Second
+	}
 	client := &Ahrikv{
-		config:      config,
-		database:    database,
-		pendingReqs: make(map[uint32]chan ChanMessage),
-		seq:         0,
+		config:         config,
+		database:       database,
+		pendingReqs:    make(map[uint32]chan ChanMessage),
+		seq:            0,
+		running:        false,
+		reconnectCount: 0,
 	}
-
-	if err := client.reconnect(); err != nil {
-		return nil, err
-	}
-
 	return client, nil
 }
 
 type Ahrikv struct {
-	config      Config
-	conn        net.Conn
-	database    string
-	mu          sync.Mutex
-	closed      bool
-	pendingReqs map[uint32]chan ChanMessage
-	seq         uint32
+	config         Config
+	conn           net.Conn
+	database       string
+	mu             sync.RWMutex
+	closed         bool
+	pendingReqs    map[uint32]chan ChanMessage
+	seq            uint32
+	running        bool
+	reconnectCount int
 }
 
-func (c *Ahrikv) reconnect() error {
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
-
-	// 重新建立连接
-	addr := net.JoinHostPort(c.config.Host, fmt.Sprintf("%d", c.config.Port))
+func (a *Ahrikv) dial() error {
+	addr := net.JoinHostPort(a.config.Host, fmt.Sprintf("%d", a.config.Port))
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("reconnect failed: %v", err)
+		return err
 	}
-
-	c.conn = conn
-
-	// 重新认证
-	if err := c.authenticate(conn); err != nil {
-		conn.Close()
-		return fmt.Errorf("re-authenticate failed: %v", err)
-	}
-
-	go c.recv()
-
-	go func() {
-		for {
-			if _, err := c.ping(); err != nil {
-				c.conn.Close()
-				break
-			}
-			time.Sleep(time.Second * 2)
-		}
-	}()
-
+	a.mu.Lock()
+	a.conn = conn
+	a.mu.Unlock()
 	return nil
 }
 
-func (c *Ahrikv) authenticate(conn net.Conn) error {
+func (a *Ahrikv) authenticate() error {
+	a.mu.RLock()
+	conn := a.conn
+	a.mu.RUnlock()
+
+	if conn == nil {
+		return errors.New("connection is nil")
+	}
+
 	header := make([]byte, 12)
 	header[0], header[1] = MAGIC_NUMBER_0, MAGIC_NUMBER_1
 	header[2] = VERSION
 	header[3] = CmdAuthenticate
 
 	cmd := command.Authenticate{
-		Secret: c.config.Secret,
+		Secret: a.config.Secret,
 	}
 
 	body, err := cmd.Serialize()
@@ -118,6 +111,7 @@ func (c *Ahrikv) authenticate(conn net.Conn) error {
 	if _, err := conn.Read(header); err != nil {
 		return err
 	}
+
 	if header[0] != MAGIC_NUMBER_0 || header[1] != MAGIC_NUMBER_1 {
 		return fmt.Errorf("invalid magic number")
 	}
@@ -127,15 +121,18 @@ func (c *Ahrikv) authenticate(conn net.Conn) error {
 	if header[3] != CmdAuthenticate {
 		return fmt.Errorf("invalid response type")
 	}
+
 	bodyLen = binary.BigEndian.Uint32(header[8:12])
 	body = make([]byte, bodyLen)
 	if _, err := conn.Read(body); err != nil {
 		return err
 	}
+
 	rs, err := command.DeserializeResultAuthenticate(body)
 	if err != nil {
 		return err
 	}
+
 	if !rs.Ok {
 		return errors.New(rs.Msg)
 	}
@@ -143,25 +140,110 @@ func (c *Ahrikv) authenticate(conn net.Conn) error {
 	return nil
 }
 
-func (c *Ahrikv) checkConnection() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (a *Ahrikv) startPingLoop() {
+	for a.running {
+		time.Sleep(a.config.PingInterval)
+		a.mu.RLock()
+		conn := a.conn
+		a.mu.RUnlock()
 
-	if c.closed {
-		return errors.New("client is closed")
+		if conn == nil {
+			continue
+		}
+
+		cmd := command.Ping{}
+		messageBytes, err := cmd.Serialize()
+		if err != nil {
+			log.Printf("Failed to serialize ping: %v", err)
+			a.handleDisconnect()
+			continue
+		}
+
+		header := make([]byte, 12)
+		header[0], header[1] = MAGIC_NUMBER_0, MAGIC_NUMBER_1
+		header[2] = VERSION
+		header[3] = CmdPing
+
+		bodyLen := uint32(len(messageBytes))
+		binary.BigEndian.PutUint32(header[4:8], 0)
+		binary.BigEndian.PutUint32(header[8:12], bodyLen)
+
+		if err := binary.Write(conn, binary.BigEndian, header); err != nil {
+			log.Printf("Failed to send ping header: %v", err)
+			a.handleDisconnect()
+			continue
+		}
+		if _, err := conn.Write(messageBytes); err != nil {
+			log.Printf("Failed to send ping: %v", err)
+			a.handleDisconnect()
+			continue
+		}
+	}
+}
+
+func (a *Ahrikv) handleDisconnect() {
+	a.mu.Lock()
+	if a.conn != nil {
+		a.conn.Close()
+		a.conn = nil
+	}
+	a.mu.Unlock()
+
+	a.reconnectCount++
+	if a.config.MaxReconnectAttempts > 0 && a.reconnectCount >= a.config.MaxReconnectAttempts {
+		log.Printf("Max reconnection attempts (%d) reached, stopping", a.config.MaxReconnectAttempts)
+		a.running = false
+		return
 	}
 
-	// 简单检查连接是否活跃
-	if c.conn == nil {
-		return c.reconnect()
+	log.Printf("Connection lost, attempting to reconnect... (attempt %d)", a.reconnectCount)
+
+	for a.running {
+		time.Sleep(a.config.ReconnectInterval)
+		if !a.running {
+			break
+		}
+
+		if err := a.dial(); err != nil {
+			log.Printf("Reconnection failed: %v, retrying in %v...", err, a.config.ReconnectInterval)
+			continue
+		}
+
+		if err := a.authenticate(); err != nil {
+			log.Printf("Authentication failed: %v, retrying...", err)
+			a.mu.Lock()
+			if a.conn != nil {
+				a.conn.Close()
+				a.conn = nil
+			}
+			a.mu.Unlock()
+			continue
+		}
+
+		log.Printf("Successfully reconnected after %d attempts", a.reconnectCount)
+		a.reconnectCount = 0
+		break
+	}
+}
+
+func (a *Ahrikv) Connect(callback ...func(message interface{})) error {
+	a.running = true
+	a.reconnectCount = 0
+
+	if err := a.dial(); err != nil {
+		return fmt.Errorf("Failed to connect: %w", err)
 	}
 
-	// 发送PING命令或空数据检查连接状态
-	_, err := c.conn.Write([]byte{})
-	if err != nil {
-		return c.reconnect()
+	if err := a.authenticate(); err != nil {
+		return fmt.Errorf("Failed to authenticate: %w", err)
 	}
 
+	if a.config.PingInterval < time.Second*5 {
+		a.config.PingInterval = time.Second * 5
+	}
+
+	go a.startPingLoop()
+	go a.recv(callback...)
 	return nil
 }
 
@@ -181,7 +263,12 @@ func (a *Ahrikv) ping() (*command.ResultPing, error) {
 	cmd := command.Ping{}
 	rs, err := a.send(CmdPing, cmd)
 	if err != nil {
-		a.conn.Close()
+		a.mu.Lock()
+		if a.conn != nil {
+			a.conn.Close()
+			a.conn = nil
+		}
+		a.mu.Unlock()
 		return nil, err
 	}
 	msg := <-rs
@@ -192,8 +279,12 @@ func (a *Ahrikv) ping() (*command.ResultPing, error) {
 }
 
 func (a *Ahrikv) send(cmdType uint8, cmd command.Command) (chan ChanMessage, error) {
-	if err := a.checkConnection(); err != nil {
-		return nil, err
+	a.mu.RLock()
+	conn := a.conn
+	a.mu.RUnlock()
+
+	if conn == nil {
+		return nil, errors.New("not connected to server")
 	}
 
 	ch := make(chan ChanMessage)
@@ -209,47 +300,68 @@ func (a *Ahrikv) send(cmdType uint8, cmd command.Command) (chan ChanMessage, err
 	if err != nil {
 		return nil, err
 	}
-	bodyLen := uint32(len(body))
 
-	// 写入序列号
+	bodyLen := uint32(len(body))
 	binary.BigEndian.PutUint32(header[4:8], id)
-	// 写入长度 (大端序)
 	binary.BigEndian.PutUint32(header[8:12], bodyLen)
 
-	// 发送头部 + 请求体
-	_, err = a.conn.Write(header)
+	_, err = conn.Write(header)
 	if err != nil {
 		return nil, err
 	}
-	_, err = a.conn.Write(body)
+	_, err = conn.Write(body)
 	if err != nil {
 		return nil, err
 	}
+
 	return ch, nil
 }
 
-func (a *Ahrikv) recv() error {
-	for {
+func (a *Ahrikv) recv(callback ...func(message interface{})) {
+	for a.running {
+		a.mu.RLock()
+		conn := a.conn
+		a.mu.RUnlock()
+
+		if conn == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
 		header := make([]byte, 12)
-		if _, err := a.conn.Read(header); err != nil {
+		if _, err := conn.Read(header); err != nil {
+			log.Printf("Read header error: %v", err)
+			a.handleDisconnect()
 			continue
 		}
+
 		if header[0] != MAGIC_NUMBER_0 || header[1] != MAGIC_NUMBER_1 {
+			log.Printf("Invalid magic number")
+			a.handleDisconnect()
 			continue
 		}
+
 		if header[2] != VERSION {
+			log.Printf("Invalid version")
+			a.handleDisconnect()
 			continue
 		}
+
 		seq := binary.BigEndian.Uint32(header[4:8])
 		ch, ok := a.pendingReqs[seq]
 		if !ok {
+			log.Printf("Unknown sequence number: %d", seq)
 			continue
 		}
+
 		bodyLen := binary.BigEndian.Uint32(header[8:12])
 		body := make([]byte, bodyLen)
-		if _, err := a.conn.Read(body); err != nil {
+		if _, err := conn.Read(body); err != nil {
+			log.Printf("Read body error: %v", err)
+			a.handleDisconnect()
 			continue
 		}
+
 		switch header[3] {
 		case CmdPing:
 			rs, err := command.DeserializeResultPing(body)
@@ -344,12 +456,15 @@ func (a *Ahrikv) recv() error {
 				}
 			}
 		default:
-			return fmt.Errorf("invalid response type")
+			for _, cback := range callback {
+				go cback(body)
+			}
 		}
 	}
 }
 
 func (a *Ahrikv) Close() error {
+	a.running = false
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -364,20 +479,6 @@ func (a *Ahrikv) Close() error {
 	return nil
 }
 
-// With: Create a new Ahrikv client with a different database.
-//
-// Params:
-//
-//	database: string - The name of the database to use.
-//
-// Returns:
-//
-//	*Ahrikv - A new Ahrikv client with the specified database.
-//
-// Example:
-//
-//	client := NewAhrikvClient(Config{Host: "127.0.0.1", Port: 8080, Secret: "mysecret"})
-//	db1 := client.With("db1")
 func (a *Ahrikv) With(database string) *Ahrikv {
 	return &Ahrikv{
 		config:   a.config,
@@ -421,21 +522,6 @@ func (a *Ahrikv) Exists(key string) (*command.ResultExistsString, error) {
 	return msg.value.(*command.ResultExistsString), nil
 }
 
-// Expire: Set expire time for a key.
-//
-// Params:
-//
-//	key: string - The key to set expire time for.
-//	ttl: *uint64 - The expire time in seconds. If it is 0, the key will not expire.
-//
-// Returns:
-//
-//	*command.ResultExpireString - The result of the operation.
-//
-// Example:
-//
-//	client := NewAhrikvClient(Config{Host: "127.0.0.1", Port: 8080, Secret: "mysecret"})
-//	result, err := client.Expire("mykey", 10)
 func (a *Ahrikv) Expire(key string, ttl *uint64) (*command.ResultExpireString, error) {
 	cmd := command.ExpireString{
 		DB:     a.database,
@@ -461,6 +547,7 @@ func (a *Ahrikv) Set(key, value string, ttl ...uint64) (*command.ResultSetString
 		Value:  value,
 		Expire: nil,
 	}
+
 	if len(ttl) > 0 {
 		if ttl[0] == 0 {
 			cmd.Expire = nil
@@ -532,7 +619,6 @@ func (a *Ahrikv) HashSet(key string, field string, value string, ttl ...uint64) 
 	}
 
 	rs, err := a.send(CmdHashSet, cmd)
-
 	if err != nil {
 		return nil, err
 	}
