@@ -15,8 +15,8 @@ use akv::{
         string::{
             DelString, GetString, ResultDelString, ResultGetString, ResultSetString, SetString,
         },
-        Authenticate, CmdType, Exists, Expire, Keys, ResultAuthenticate, ResultExists,
-        ResultExpire, ResultKeys,
+        Authenticate, CmdType, DbInfo, Dbs, Exists, Expire, Keys, ResultAuthenticate, ResultDbs,
+        ResultExists, ResultExpire, ResultKeys,
     },
     config::Config,
     MAGIC_NUMBER, VERSION,
@@ -301,6 +301,14 @@ impl Client {
         let result: ResultHashFields = serde_json::from_slice(&body)?;
         Ok((result.fields, result.total))
     }
+
+    async fn dbs(&mut self) -> Result<Vec<DbInfo>, Box<dyn Error>> {
+        let cmd = Dbs {};
+        let data = serde_json::to_vec(&cmd)?;
+        let body = self.send_request(CmdType::Dbs, data).await?;
+        let result: ResultDbs = serde_json::from_slice(&body)?;
+        Ok(result.dbs)
+    }
 }
 
 #[tokio::main]
@@ -394,6 +402,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "exists" => handle_exists(&mut client, &db, parts.as_slice()).await,
                     "expire" => handle_expire(&mut client, &db, parts.as_slice()).await,
                     "keys" => handle_keys(&mut client, &db, parts.as_slice()).await,
+                    "dbs" => handle_dbs(&mut client, &db, parts.as_slice()).await,
                     "use" => handle_use(&mut db, parts.as_slice()),
                     "hset" => handle_hset(&mut client, &db, parts.as_slice()).await,
                     "hget" => handle_hget(&mut client, &db, parts.as_slice()).await,
@@ -449,6 +458,7 @@ fn print_help() {
     EXISTS <key>                         - Check if a key exists
     EXPIRE <key> <seconds>               - Set expiration time
     KEYS [page] [size]                   - List all keys
+    DBS                                  - List all databases with key count
     USE <db>                             - Switch database
     HSET <key> <field> <value> [expire]  - Set hash field
     HGET <key> <field>                   - Get hash field
@@ -702,6 +712,19 @@ async fn handle_hfields(
     let mut result = format!("Total: {}\n", total);
     for field in fields {
         result.push_str(&format!("  {}\n", field));
+    }
+    Ok(result)
+}
+
+async fn handle_dbs(
+    client: &mut Client,
+    _db: &str,
+    _parts: &[String],
+) -> Result<String, Box<dyn Error>> {
+    let dbs = client.dbs().await?;
+    let mut result = String::new();
+    for db_info in dbs {
+        result.push_str(&format!("{}: {}\n", db_info.name, db_info.count));
     }
     Ok(result)
 }

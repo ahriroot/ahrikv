@@ -13,6 +13,7 @@ pub enum CmdType {
     Keys = 0x03,
     Exists = 0x04,
     Expire = 0x05,
+    Dbs = 0x06,
     SetString = 0x11,
     GetString = 0x12,
     DelString = 0x13,
@@ -210,6 +211,42 @@ impl ResultExpire {
         result.extend(&data_length.to_be_bytes()); // 数据长度
         result.extend(data); // 数据
 
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+pub struct Dbs {
+    // 这个命令不需要参数
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+pub struct DbInfo {
+    pub name: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+pub struct ResultDbs {
+    pub dbs: Vec<DbInfo>,
+}
+
+impl ResultDbs {
+    pub fn new(dbs: Vec<DbInfo>) -> Self {
+        Self { dbs }
+    }
+
+    pub fn to_result(&self, seq: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = serde_json::to_vec(self)?;
+        let data_length = data.len() as u32;
+
+        let mut result = vec![];
+        result.extend(&MAGIC_NUMBER); // 魔数
+        result.push(VERSION); // 版本
+        result.push(CmdType::Dbs as u8); // Dbs 命令结果
+        result.extend(&seq.to_be_bytes()); // 序列号
+        result.extend(&data_length.to_be_bytes()); // 长度
+        result.extend(data); // Dbs 数据
         Ok(result)
     }
 }

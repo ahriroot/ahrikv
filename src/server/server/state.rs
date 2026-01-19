@@ -9,7 +9,7 @@ use akv::{
         string::{
             DelString, GetString, ResultDelString, ResultGetString, ResultSetString, SetString,
         },
-        Exists, Expire, Keys, ResultExists, ResultExpire, ResultKeys,
+        Dbs, DbInfo, Exists, Expire, Keys, ResultDbs, ResultExists, ResultExpire, ResultKeys,
     },
     config::Config,
     error::Error,
@@ -455,8 +455,7 @@ impl State {
     }
 
     pub async fn hash_fields(&mut self, data: Vec<u8>) -> Result<ResultHashFields, Error> {
-        let hash: HashFields =
-            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+        let hash: HashFields = serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
         let db = self.get_db(hash.db).await;
 
@@ -494,6 +493,24 @@ impl State {
         let len = keys.len() as u32;
 
         Ok(ResultHashFields::new(keys, len))
+    }
+
+    pub async fn dbs(&mut self, data: Vec<u8>) -> Result<ResultDbs, Error> {
+        let _dbs: Dbs = serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+        
+        let dbs = self.databases.read().await;
+        let mut result = Vec::new();
+
+        for (name, (db, _jh)) in dbs.iter() {
+            let db = db.read().await;
+            let count = db.len() as u32;
+            result.push(DbInfo {
+                name: name.clone(),
+                count,
+            });
+        }
+
+        Ok(ResultDbs::new(result))
     }
 }
 

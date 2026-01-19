@@ -37,6 +37,7 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                     0x03 => CmdType::Keys,
                     0x04 => CmdType::Exists,
                     0x05 => CmdType::Expire,
+                    0x06 => CmdType::Dbs,
                     0x11 => CmdType::GetString,
                     0x12 => CmdType::SetString,
                     0x13 => CmdType::DelString,
@@ -100,6 +101,7 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                     0x03 => CmdType::Keys,
                     0x04 => CmdType::Exists,
                     0x05 => CmdType::Expire,
+                    0x06 => CmdType::Dbs,
                     0x11 => CmdType::SetString,
                     0x12 => CmdType::GetString,
                     0x13 => CmdType::DelString,
@@ -175,6 +177,20 @@ pub async fn handler(socket: TcpStream, mut state: State) {
                         let _ = tx
                             .send(
                                 ResultError::new(CmdType::Expire as u8, e.to_string())
+                                    .to_result(header.2)
+                                    .unwrap(),
+                            )
+                            .await;
+                    }
+                },
+                CmdType::Dbs => match state.dbs(body).await {
+                    Ok(dbs) => {
+                        let _ = tx.send(dbs.to_result(header.2).unwrap()).await;
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(
+                                ResultError::new(CmdType::Dbs as u8, e.to_string())
                                     .to_result(header.2)
                                     .unwrap(),
                             )
