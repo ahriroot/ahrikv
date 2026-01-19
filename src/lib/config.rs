@@ -1,8 +1,8 @@
-use std::{env, error::Error};
+use std::error::Error;
 
 use serde::{Deserialize, Serialize};
 
-use akv::utils::resolve_config_path;
+use crate::utils::resolve_config_path;
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -28,13 +28,8 @@ fn default_string() -> String {
 }
 
 impl Config {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let args: Vec<String> = env::args().collect();
-        let config_file = if args.len() > 1 {
-            &args[1]
-        } else {
-            "./config.toml"
-        };
+    pub fn new(config_path: Option<&str>) -> Result<Self, Box<dyn Error>> {
+        let config_file = config_path.unwrap_or("./config.toml");
 
         match resolve_config_path(config_file) {
             Ok(abs_path) => {

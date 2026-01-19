@@ -11,14 +11,13 @@ use akv::{
         },
         Exists, Expire, Keys, ResultExists, ResultExpire, ResultKeys,
     },
+    config::Config,
     error::Error,
     persistence::PersistenceEngine,
     utils,
     value::{Entry, Value},
 };
 use tokio::sync::RwLock;
-
-use super::config::Config;
 
 type Taskhandle = tokio::task::JoinHandle<()>;
 type Database = Arc<RwLock<HashMap<String, Entry>>>;

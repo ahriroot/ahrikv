@@ -1,7 +1,9 @@
 use std::error::Error;
-use std::io::{self, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use clap::Parser;
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 
 use akv::{
     command::{
@@ -15,11 +17,30 @@ use akv::{
         Authenticate, CmdType, Exists, Expire, Keys, ResultAuthenticate, ResultExists,
         ResultExpire, ResultKeys,
     },
+    config::Config,
     MAGIC_NUMBER, VERSION,
 };
 
-mod config;
-use config::Config;
+/// Ahrikv CLI client
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Path to config file
+    #[arg(short, long, value_name = "FILE", default_value = "./config.toml")]
+    config: String,
+    
+    /// Server host
+    #[arg(short = 'H', long, value_name = "HOST")]
+    host: Option<String>,
+    
+    /// Server port
+    #[arg(short, long, value_name = "PORT")]
+    port: Option<u16>,
+    
+    /// Authentication secret
+    #[arg(short, long, value_name = "SECRET")]
+    secret: Option<String>,
+}
 
 struct Client {
     stream: TcpStream,
@@ -72,7 +93,11 @@ impl Client {
         Ok(())
     }
 
-    async fn send_request(&mut self, cmd_type: CmdType, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    async fn send_request(
+        &mut self,
+        cmd_type: CmdType,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
         let data_length = data.len() as u32;
 
         let mut request = vec![];
@@ -100,7 +125,13 @@ impl Client {
         Ok(body)
     }
 
-    async fn set(&mut self, db: &str, key: &str, value: &str, expire: Option<u64>) -> Result<(), Box<dyn Error>> {
+    async fn set(
+        &mut self,
+        db: &str,
+        key: &str,
+        value: &str,
+        expire: Option<u64>,
+    ) -> Result<(), Box<dyn Error>> {
         let cmd = SetString {
             db: db.to_string(),
             key: key.to_string(),
@@ -161,7 +192,12 @@ impl Client {
         Ok(result.ok)
     }
 
-    async fn keys(&mut self, db: &str, page: usize, size: usize) -> Result<(Vec<String>, u32), Box<dyn Error>> {
+    async fn keys(
+        &mut self,
+        db: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<(Vec<String>, u32), Box<dyn Error>> {
         let cmd = Keys {
             db: db.to_string(),
             page,
@@ -173,7 +209,14 @@ impl Client {
         Ok((result.keys, result.total))
     }
 
-    async fn hset(&mut self, db: &str, key: &str, field: &str, value: &str, expire: Option<u64>) -> Result<(), Box<dyn Error>> {
+    async fn hset(
+        &mut self,
+        db: &str,
+        key: &str,
+        field: &str,
+        value: &str,
+        expire: Option<u64>,
+    ) -> Result<(), Box<dyn Error>> {
         let cmd = HashSet {
             db: db.to_string(),
             key: key.to_string(),
@@ -190,7 +233,12 @@ impl Client {
         Ok(())
     }
 
-    async fn hget(&mut self, db: &str, key: &str, field: &str) -> Result<Option<String>, Box<dyn Error>> {
+    async fn hget(
+        &mut self,
+        db: &str,
+        key: &str,
+        field: &str,
+    ) -> Result<Option<String>, Box<dyn Error>> {
         let cmd = HashGet {
             db: db.to_string(),
             key: key.to_string(),
@@ -202,7 +250,12 @@ impl Client {
         Ok(result.value)
     }
 
-    async fn hdel(&mut self, db: &str, key: &str, field: &str) -> Result<Option<String>, Box<dyn Error>> {
+    async fn hdel(
+        &mut self,
+        db: &str,
+        key: &str,
+        field: &str,
+    ) -> Result<Option<String>, Box<dyn Error>> {
         let cmd = HashDel {
             db: db.to_string(),
             key: key.to_string(),
@@ -251,7 +304,9 @@ impl Client {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let config = Config::new()?;
+    let cli = Cli::parse();
+    
+    let config = Config::new(Some(&cli.config))?;
     let addr = config.get_address();
     let secret = &config.secret;
 
@@ -261,84 +316,112 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut db = "default".to_string();
 
+    // 创建rustyline编辑器
+    let mut rl = DefaultEditor::new()?;
+    
+    // 加载历史记录
+    let _ = rl.load_history("akvc_history.txt");
+
     loop {
-        print!("{}> ", db);
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let input = input.trim();
-
-        if input.is_empty() {
-            continue;
-        }
-
-        if input == "quit" || input == "exit" {
-            println!("Goodbye!");
-            break;
-        }
-
-        if input == "help" {
-            print_help();
-            continue;
-        }
-
-        let parts = parse_input(input);
-        if parts.is_empty() {
-            continue;
-        }
-
-        let cmd = parts[0].to_lowercase();
-        let result = match cmd.as_str() {
-            "set" => handle_set(&mut client, &mut db, parts.as_slice()).await,
-            "get" => handle_get(&mut client, &db, parts.as_slice()).await,
-            "del" => handle_del(&mut client, &db, parts.as_slice()).await,
-            "exists" => handle_exists(&mut client, &db, parts.as_slice()).await,
-            "expire" => handle_expire(&mut client, &db, parts.as_slice()).await,
-            "keys" => handle_keys(&mut client, &db, parts.as_slice()).await,
-            "use" => handle_use(&mut db, parts.as_slice()),
-            "hset" => handle_hset(&mut client, &db, parts.as_slice()).await,
-            "hget" => handle_hget(&mut client, &db, parts.as_slice()).await,
-            "hdel" => handle_hdel(&mut client, &db, parts.as_slice()).await,
-            "hexists" => handle_hexists(&mut client, &db, parts.as_slice()).await,
-            "hlen" => handle_hlen(&mut client, &db, parts.as_slice()).await,
-            "hfields" => handle_hfields(&mut client, &db, parts.as_slice()).await,
-            _ => Err(format!("Unknown command: {}. Type 'help' for available commands.", cmd).into()),
-        };
-
-        match result {
-            Ok(msg) => {
-                if !msg.is_empty() {
-                    println!("{}", msg);
+        let prompt = format!("{}> ", db);
+        let readline = rl.readline(&prompt);
+        match readline {
+            Ok(line) => {
+                // 添加到历史记录
+                let _ = rl.add_history_entry(line.as_str());
+                
+                let input = line.trim();
+                if input.is_empty() {
+                    continue;
                 }
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
+
+                if input == "quit" || input == "exit" {
+                    println!("Goodbye!");
+                    break;
+                }
+
+                if input == "help" {
+                    print_help();
+                    continue;
+                }
+
+                let parts = parse_input(input);
+                if parts.is_empty() {
+                    continue;
+                }
+
+                let cmd = parts[0].to_lowercase();
+                let result = match cmd.as_str() {
+                    "set" => handle_set(&mut client, &mut db, parts.as_slice()).await,
+                    "get" => handle_get(&mut client, &db, parts.as_slice()).await,
+                    "del" => handle_del(&mut client, &db, parts.as_slice()).await,
+                    "exists" => handle_exists(&mut client, &db, parts.as_slice()).await,
+                    "expire" => handle_expire(&mut client, &db, parts.as_slice()).await,
+                    "keys" => handle_keys(&mut client, &db, parts.as_slice()).await,
+                    "use" => handle_use(&mut db, parts.as_slice()),
+                    "hset" => handle_hset(&mut client, &db, parts.as_slice()).await,
+                    "hget" => handle_hget(&mut client, &db, parts.as_slice()).await,
+                    "hdel" => handle_hdel(&mut client, &db, parts.as_slice()).await,
+                    "hexists" => handle_hexists(&mut client, &db, parts.as_slice()).await,
+                    "hlen" => handle_hlen(&mut client, &db, parts.as_slice()).await,
+                    "hfields" => handle_hfields(&mut client, &db, parts.as_slice()).await,
+                    _ => Err(format!(
+                        "Unknown command: {}. Type 'help' for available commands.",
+                        cmd
+                    )
+                    .into()),
+                };
+
+                match result {
+                    Ok(msg) => {
+                        if !msg.is_empty() {
+                            println!("{}", msg);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                    }
+                }
+            },
+            Err(ReadlineError::Interrupted) => {
+                println!("\n^C");
+                break;
+            },
+            Err(ReadlineError::Eof) => {
+                println!("\nBye!");
+                break;
+            },
+            Err(err) => {
+                eprintln!("Failed to read line: {:?}", err);
+                break;
             }
         }
     }
+    
+    // 保存历史记录
+    let _ = rl.save_history("akvc_history.txt");
 
     Ok(())
 }
 
 fn print_help() {
-    println!("\nAvailable commands:");
-    println!("  SET <key> <value> [expire]  - Set a string value");
-    println!("  GET <key>                  - Get a string value");
-    println!("  DEL <key>                  - Delete a key");
-    println!("  EXISTS <key>                - Check if a key exists");
-    println!("  EXPIRE <key> <seconds>     - Set expiration time");
-    println!("  KEYS [page] [size]         - List all keys");
-    println!("  USE <db>                   - Switch database");
-    println!("  HSET <key> <field> <value> [expire] - Set hash field");
-    println!("  HGET <key> <field>         - Get hash field");
-    println!("  HDEL <key> <field>         - Delete hash field");
-    println!("  HEXISTS <key> <field>      - Check if hash field exists");
-    println!("  HLEN <key>                 - Get hash length");
-    println!("  HFIELDS <key>              - Get all hash fields");
-    println!("  HELP                       - Show this help");
-    println!("  QUIT/EXIT                  - Exit the CLI");
-    println!();
+    print!(r#"Available commands:
+    SET <key> <value> [expire]           - Set a string value
+    GET <key>                            - Get a string value
+    DEL <key>                            - Delete a key
+    EXISTS <key>                         - Check if a key exists
+    EXPIRE <key> <seconds>               - Set expiration time
+    KEYS [page] [size]                   - List all keys
+    USE <db>                             - Switch database
+    HSET <key> <field> <value> [expire]  - Set hash field
+    HGET <key> <field>                   - Get hash field
+    HDEL <key> <field>                   - Delete hash field
+    HEXISTS <key> <field>                - Check if hash field exists
+    HLEN <key>                           - Get hash length
+    HFIELDS <key>                        - Get all hash fields
+    HELP                                 - Show this help
+    QUIT/EXIT                            - Exit the CLI
+"#);
 }
 
 fn parse_input(input: &str) -> Vec<String> {
@@ -382,7 +465,11 @@ fn parse_input(input: &str) -> Vec<String> {
     parts
 }
 
-async fn handle_set(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_set(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 3 {
         return Err("Usage: SET <key> <value> [expire]".into());
     }
@@ -397,7 +484,11 @@ async fn handle_set(client: &mut Client, db: &str, parts: &[String]) -> Result<S
     Ok("OK".to_string())
 }
 
-async fn handle_get(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_get(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 2 {
         return Err("Usage: GET <key>".into());
     }
@@ -408,7 +499,11 @@ async fn handle_get(client: &mut Client, db: &str, parts: &[String]) -> Result<S
     }
 }
 
-async fn handle_del(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_del(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 2 {
         return Err("Usage: DEL <key>".into());
     }
@@ -419,7 +514,11 @@ async fn handle_del(client: &mut Client, db: &str, parts: &[String]) -> Result<S
     }
 }
 
-async fn handle_exists(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_exists(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 2 {
         return Err("Usage: EXISTS <key>".into());
     }
@@ -428,7 +527,11 @@ async fn handle_exists(client: &mut Client, db: &str, parts: &[String]) -> Resul
     Ok(if exists { "1" } else { "0" }.to_string())
 }
 
-async fn handle_expire(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_expire(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 3 {
         return Err("Usage: EXPIRE <key> <seconds>".into());
     }
@@ -438,9 +541,21 @@ async fn handle_expire(client: &mut Client, db: &str, parts: &[String]) -> Resul
     Ok(if ok { "1" } else { "0" }.to_string())
 }
 
-async fn handle_keys(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
-    let page = if parts.len() > 1 { parts[1].parse().unwrap_or(1) } else { 1 };
-    let size = if parts.len() > 2 { parts[2].parse().unwrap_or(100) } else { 100 };
+async fn handle_keys(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
+    let page = if parts.len() > 1 {
+        parts[1].parse().unwrap_or(1)
+    } else {
+        1
+    };
+    let size = if parts.len() > 2 {
+        parts[2].parse().unwrap_or(100)
+    } else {
+        100
+    };
     let (keys, total) = client.keys(db, page, size).await?;
     let mut result = format!("Total: {}\n", total);
     for key in keys {
@@ -457,7 +572,11 @@ fn handle_use(db: &mut String, parts: &[String]) -> Result<String, Box<dyn Error
     Ok(format!("Switched to database \"{}\"", db))
 }
 
-async fn handle_hset(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hset(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 4 {
         return Err("Usage: HSET <key> <field> <value> [expire]".into());
     }
@@ -473,7 +592,11 @@ async fn handle_hset(client: &mut Client, db: &str, parts: &[String]) -> Result<
     Ok("OK".to_string())
 }
 
-async fn handle_hget(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hget(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 3 {
         return Err("Usage: HGET <key> <field>".into());
     }
@@ -485,7 +608,11 @@ async fn handle_hget(client: &mut Client, db: &str, parts: &[String]) -> Result<
     }
 }
 
-async fn handle_hdel(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hdel(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 3 {
         return Err("Usage: HDEL <key> <field>".into());
     }
@@ -497,7 +624,11 @@ async fn handle_hdel(client: &mut Client, db: &str, parts: &[String]) -> Result<
     }
 }
 
-async fn handle_hexists(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hexists(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 3 {
         return Err("Usage: HEXISTS <key> <field>".into());
     }
@@ -507,7 +638,11 @@ async fn handle_hexists(client: &mut Client, db: &str, parts: &[String]) -> Resu
     Ok(if exists { "1" } else { "0" }.to_string())
 }
 
-async fn handle_hlen(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hlen(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 2 {
         return Err("Usage: HLEN <key>".into());
     }
@@ -516,7 +651,11 @@ async fn handle_hlen(client: &mut Client, db: &str, parts: &[String]) -> Result<
     Ok(len.to_string())
 }
 
-async fn handle_hfields(client: &mut Client, db: &str, parts: &[String]) -> Result<String, Box<dyn Error>> {
+async fn handle_hfields(
+    client: &mut Client,
+    db: &str,
+    parts: &[String],
+) -> Result<String, Box<dyn Error>> {
     if parts.len() < 2 {
         return Err("Usage: HFIELDS <key>".into());
     }

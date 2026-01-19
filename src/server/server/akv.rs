@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, env, sync::Arc};
 
 use akv::{
+    config::Config,
     persistence::{config::PersistenceConfig, PersistenceEngine},
 };
 use tokio::{
@@ -9,14 +9,20 @@ use tokio::{
     sync::{oneshot, RwLock},
 };
 
-use crate::server::{config, handler::handler, state::State};
+use crate::server::{handler::handler, state::State};
 
 use super::state::interval;
 
 pub async fn start(
     shutdown_receiver: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config::Config::new().unwrap();
+    let args: Vec<String> = env::args().collect();
+    let config_path = if args.len() > 1 {
+        Some(args[1].as_str())
+    } else {
+        None
+    };
+    let config = Config::new(config_path).unwrap();
 
     let persistence_config = PersistenceConfig::default();
     let persistence_engine = PersistenceEngine::new(persistence_config).await?;
