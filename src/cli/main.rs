@@ -1,9 +1,10 @@
-use std::error::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use clap::Parser;
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::{error::ReadlineError, history::History, DefaultEditor};
+use std::{env, error::Error, fs, path::Path};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 use akv::{
     command::{
@@ -28,15 +29,15 @@ struct Cli {
     /// Path to config file
     #[arg(short, long, value_name = "FILE", default_value = "./config.toml")]
     config: String,
-    
+
     /// Server host
     #[arg(short = 'H', long, value_name = "HOST")]
     host: Option<String>,
-    
+
     /// Server port
     #[arg(short, long, value_name = "PORT")]
     port: Option<u16>,
-    
+
     /// Authentication secret
     #[arg(short, long, value_name = "SECRET")]
     secret: Option<String>,
@@ -305,7 +306,7 @@ impl Client {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    
+
     let config = Config::new(Some(&cli.config))?;
     let addr = config.get_address();
     let secret = &config.secret;
@@ -318,9 +319,44 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 创建rustyline编辑器
     let mut rl = DefaultEditor::new()?;
-    
+
+    // 获取用户目录并构建历史文件路径
+    let history_path = match env::var("HOME") {
+        Ok(home) => {
+            // Unix系统
+            let ahrikv_dir = Path::new(&home).join(".ahriknow").join("ahrikv");
+            // 确保目录存在
+            if let Err(_) = fs::create_dir_all(&ahrikv_dir) {
+                // 如果创建目录失败，使用当前目录
+                Path::new("akvc_history.txt").to_path_buf()
+            } else {
+                ahrikv_dir.join("akvc_history.txt")
+            }
+        }
+        Err(_) => match env::var("USERPROFILE") {
+            Ok(userprofile) => {
+                // Windows系统
+                let ahrikv_dir = Path::new(&userprofile).join(".ahriknow").join("ahrikv");
+                // 确保目录存在
+                if let Err(_) = fs::create_dir_all(&ahrikv_dir) {
+                    // 如果创建目录失败，使用当前目录
+                    Path::new("akvc_history.txt").to_path_buf()
+                } else {
+                    ahrikv_dir.join("akvc_history.txt")
+                }
+            }
+            Err(_) => {
+                // 如果无法获取用户目录，使用当前目录
+                Path::new("akvc_history.txt").to_path_buf()
+            }
+        },
+    };
+
+    // 设置历史记录最大长度为1000条
+    let _ = rl.history_mut().set_max_len(1000);
+
     // 加载历史记录
-    let _ = rl.load_history("akvc_history.txt");
+    let _ = rl.load_history(&history_path);
 
     loop {
         let prompt = format!("{}> ", db);
@@ -329,7 +365,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(line) => {
                 // 添加到历史记录
                 let _ = rl.add_history_entry(line.as_str());
-                
+
                 let input = line.trim();
                 if input.is_empty() {
                     continue;
@@ -382,30 +418,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         eprintln!("Error: {}", e);
                     }
                 }
-            },
+            }
             Err(ReadlineError::Interrupted) => {
                 println!("\n^C");
                 break;
-            },
+            }
             Err(ReadlineError::Eof) => {
                 println!("\nBye!");
                 break;
-            },
+            }
             Err(err) => {
                 eprintln!("Failed to read line: {:?}", err);
                 break;
             }
         }
     }
-    
+
     // 保存历史记录
-    let _ = rl.save_history("akvc_history.txt");
+    let _ = rl.save_history(&history_path);
 
     Ok(())
 }
 
 fn print_help() {
-    print!(r#"Available commands:
+    print!(
+        r#"Available commands:
     SET <key> <value> [expire]           - Set a string value
     GET <key>                            - Get a string value
     DEL <key>                            - Delete a key
@@ -421,7 +458,8 @@ fn print_help() {
     HFIELDS <key>                        - Get all hash fields
     HELP                                 - Show this help
     QUIT/EXIT                            - Exit the CLI
-"#);
+"#
+    );
 }
 
 fn parse_input(input: &str) -> Vec<String> {
