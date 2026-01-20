@@ -74,109 +74,38 @@ func (a *Ahrikv) dial() error {
 }
 
 func (a *Ahrikv) authenticate() error {
-	a.mu.RLock()
-	conn := a.conn
-	a.mu.RUnlock()
-
-	if conn == nil {
-		return errors.New("connection is nil")
-	}
-
-	header := make([]byte, 12)
-	header[0], header[1] = MAGIC_NUMBER_0, MAGIC_NUMBER_1
-	header[2] = VERSION
-	header[3] = CmdAuthenticate
-
 	cmd := command.Authenticate{
 		Secret: a.config.Secret,
 	}
 
-	body, err := cmd.Serialize()
+	rs, err := a.send(CmdAuthenticate, cmd)
 	if err != nil {
+		a.mu.Lock()
+		if a.conn != nil {
+			a.conn.Close()
+			a.conn = nil
+		}
+		a.mu.Unlock()
 		return err
 	}
-
-	bodyLen := uint32(len(body))
-	binary.BigEndian.PutUint32(header[4:8], 0)
-	binary.BigEndian.PutUint32(header[8:12], bodyLen)
-
-	if _, err := conn.Write(header); err != nil {
-		return err
+	msg := <-rs
+	if msg.err != nil {
+		a.mu.Lock()
+		if a.conn != nil {
+			a.conn.Close()
+			a.conn = nil
+		}
+		a.mu.Unlock()
+		return msg.err
 	}
-	if _, err := conn.Write(body); err != nil {
-		return err
-	}
-
-	header = make([]byte, 12)
-	if _, err := conn.Read(header); err != nil {
-		return err
-	}
-
-	if header[0] != MAGIC_NUMBER_0 || header[1] != MAGIC_NUMBER_1 {
-		return fmt.Errorf("invalid magic number")
-	}
-	if header[2] != VERSION {
-		return fmt.Errorf("invalid version")
-	}
-	if header[3] != CmdAuthenticate {
-		return fmt.Errorf("invalid response type")
-	}
-
-	bodyLen = binary.BigEndian.Uint32(header[8:12])
-	body = make([]byte, bodyLen)
-	if _, err := conn.Read(body); err != nil {
-		return err
-	}
-
-	rs, err := command.DeserializeResultAuthenticate(body)
-	if err != nil {
-		return err
-	}
-
-	if !rs.Ok {
-		return errors.New(rs.Msg)
-	}
-
 	return nil
 }
 
 func (a *Ahrikv) startPingLoop() {
 	for a.running {
 		time.Sleep(a.config.PingInterval)
-		a.mu.RLock()
-		conn := a.conn
-		a.mu.RUnlock()
-
-		if conn == nil {
-			continue
-		}
-
-		cmd := command.Ping{}
-		messageBytes, err := cmd.Serialize()
-		if err != nil {
-			log.Printf("Failed to serialize ping: %v", err)
-			a.handleDisconnect()
-			continue
-		}
-
-		header := make([]byte, 12)
-		header[0], header[1] = MAGIC_NUMBER_0, MAGIC_NUMBER_1
-		header[2] = VERSION
-		header[3] = CmdPing
-
-		bodyLen := uint32(len(messageBytes))
-		binary.BigEndian.PutUint32(header[4:8], 0)
-		binary.BigEndian.PutUint32(header[8:12], bodyLen)
-
-		if err := binary.Write(conn, binary.BigEndian, header); err != nil {
-			log.Printf("Failed to send ping header: %v", err)
-			a.handleDisconnect()
-			continue
-		}
-		if _, err := conn.Write(messageBytes); err != nil {
-			log.Printf("Failed to send ping: %v", err)
-			a.handleDisconnect()
-			continue
+		if _, err := a.ping(); err != nil {
+			log.Printf("Ping failed: %v", err)
 		}
 	}
 }
@@ -234,16 +163,17 @@ func (a *Ahrikv) Connect(callback ...func(message interface{})) error {
 		return fmt.Errorf("Failed to connect: %w", err)
 	}
 
-	if err := a.authenticate(); err != nil {
-		return fmt.Errorf("Failed to authenticate: %w", err)
-	}
-
 	if a.config.PingInterval < time.Second*5 {
 		a.config.PingInterval = time.Second * 5
 	}
 
 	go a.startPingLoop()
 	go a.recv(callback...)
+
+	if err := a.authenticate(); err != nil {
+		return fmt.Errorf("Failed to authenticate: %w", err)
+	}
+
 	return nil
 }
 
@@ -365,6 +295,12 @@ func (a *Ahrikv) recv(callback ...func(message interface{})) {
 		switch header[3] {
 		case CmdPing:
 			rs, err := command.DeserializeResultPing(body)
+			ch <- ChanMessage{
+				value: rs,
+				err:   err,
+			}
+		case CmdAuthenticate:
+			rs, err := command.DeserializeResultAuthenticate(body)
 			ch <- ChanMessage{
 				value: rs,
 				err:   err,
