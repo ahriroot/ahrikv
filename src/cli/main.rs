@@ -15,7 +15,7 @@ use akv::{
         string::{
             DelString, GetString, ResultDelString, ResultGetString, ResultSetString, SetString,
         },
-        Authenticate, CmdType, DbInfo, Dbs, Exists, Expire, Keys, ResultAuthenticate, ResultDbs,
+        Authenticate, CmdType, DbInfo, Dbs, Exists, Expire, KeyInfo, Keys, ResultAuthenticate, ResultDbs,
         ResultExists, ResultExpire, ResultKeys,
     },
     config::Config,
@@ -198,7 +198,7 @@ impl Client {
         db: &str,
         page: usize,
         size: usize,
-    ) -> Result<(Vec<String>, u32), Box<dyn Error>> {
+    ) -> Result<(Vec<KeyInfo>, u32), Box<dyn Error>> {
         let cmd = Keys {
             db: db.to_string(),
             page,
@@ -606,8 +606,8 @@ async fn handle_keys(
     };
     let (keys, total) = client.keys(db, page, size).await?;
     let mut result = format!("Total: {}\n", total);
-    for key in keys {
-        result.push_str(&format!("  {}\n", key));
+    for key_info in keys {
+        result.push_str(&format!("  {} (type: {})\n", key_info.key, key_info.typ));
     }
     Ok(result)
 }

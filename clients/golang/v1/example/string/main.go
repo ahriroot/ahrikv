@@ -19,6 +19,12 @@ func main() {
 		panic(err)
 	}
 
+	err = akv.Connect()
+	if err != nil {
+		println("connect to akv server failed")
+		panic(err)
+	}
+
 	result, err := akv.Set("key", "value", 5)
 	if err != nil {
 		panic(err)

@@ -76,13 +76,45 @@ func (s Keys) Serialize() ([]byte, error) {
 	return json.Marshal(s)
 }
 
+type KeyInfo struct {
+	Key string `json:"key"`
+	Typ uint8  `json:"typ"`
+}
+
 type ResultKeys struct {
-	Keys  []string `json:"keys"`
-	Total uint32   `json:"total"`
+	Keys  []KeyInfo `json:"keys"`
+	Total uint32    `json:"total"`
 }
 
 func DeserializeResultKeys(data []byte) (*ResultKeys, error) {
 	var result ResultKeys
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ========== Dbs ==========
+type Dbs struct {
+	// 这个命令不需要参数
+}
+
+func (s Dbs) Serialize() ([]byte, error) {
+	return json.Marshal(s)
+}
+
+type DbInfo struct {
+	Name  string `json:"name"`
+	Count uint32 `json:"count"`
+}
+
+type ResultDbs struct {
+	Dbs []DbInfo `json:"dbs"`
+}
+
+func DeserializeResultDbs(data []byte) (*ResultDbs, error) {
+	var result ResultDbs
 	err := json.Unmarshal(data, &result)
 	if err != nil {
 		return nil, err

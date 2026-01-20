@@ -125,13 +125,19 @@ pub struct Keys {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+pub struct KeyInfo {
+    pub key: String,
+    pub typ: u8,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
 pub struct ResultKeys {
-    pub keys: Vec<String>,
+    pub keys: Vec<KeyInfo>,
     pub total: u32,
 }
 
 impl ResultKeys {
-    pub fn new(keys: Vec<String>, total: u32) -> Self {
+    pub fn new(keys: Vec<KeyInfo>, total: u32) -> Self {
         Self { keys, total }
     }
 

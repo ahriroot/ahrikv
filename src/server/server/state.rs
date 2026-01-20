@@ -9,7 +9,7 @@ use akv::{
         string::{
             DelString, GetString, ResultDelString, ResultGetString, ResultSetString, SetString,
         },
-        Dbs, DbInfo, Exists, Expire, Keys, ResultDbs, ResultExists, ResultExpire, ResultKeys,
+        Dbs, DbInfo, Exists, Expire, KeyInfo, Keys, ResultDbs, ResultExists, ResultExpire, ResultKeys,
     },
     config::Config,
     error::Error,
@@ -55,19 +55,31 @@ impl State {
     }
 
     pub async fn keys(&mut self, data: Vec<u8>) -> Result<ResultKeys, Error> {
-        let keys: Keys =
-            serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
+        let keys: Keys = serde_json::from_slice(&data).map_err(|e| Error::BadCommand(e.to_string()))?;
 
         let db = self.get_db(keys.db).await;
         let db = db.read().await;
 
         let total = db.len() as u32;
 
-        let keys: Vec<String> = db
-            .keys()
+        let keys: Vec<KeyInfo> = db
+            .iter()
             .skip((keys.page - 1) * keys.size)
             .take(keys.size)
-            .cloned()
+            .map(|(key, entry)| {
+                // 根据 Value 类型返回对应的数字类型
+                let typ = match &entry.value {
+                    Value::String(_) => 1,
+                    Value::List(_) => 2,
+                    Value::Hash(_) => 3,
+                    Value::Set(_) => 4,
+                    Value::SortedSet(_) => 5,
+                };
+                KeyInfo {
+                    key: key.clone(),
+                    typ,
+                }
+            })
             .collect();
 
         Ok(ResultKeys::new(keys, total))

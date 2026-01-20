@@ -441,6 +441,12 @@ func (a *Ahrikv) recv(callback ...func(message interface{})) {
 				value: rs,
 				err:   err,
 			}
+		case CmdDbs:
+			rs, err := command.DeserializeResultDbs(body)
+			ch <- ChanMessage{
+				value: rs,
+				err:   err,
+			}
 		case Error:
 			rs, err := command.DeserializeResultError(body)
 			if err != nil {
@@ -715,4 +721,18 @@ func (a *Ahrikv) HashFields(key string) (*command.ResultHashFields, error) {
 		return nil, msg.err
 	}
 	return msg.value.(*command.ResultHashFields), nil
+}
+
+func (a *Ahrikv) Dbs() (*command.ResultDbs, error) {
+	cmd := command.Dbs{}
+
+	rs, err := a.send(CmdDbs, cmd)
+	if err != nil {
+		return nil, err
+	}
+	msg := <-rs
+	if msg.err != nil {
+		return nil, msg.err
+	}
+	return msg.value.(*command.ResultDbs), nil
 }
